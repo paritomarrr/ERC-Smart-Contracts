@@ -546,3 +546,83 @@ _balances[from] -= value;
 emit Transfer(from, address(0), value);
 ```
 
+## Line by line execution workflows for write functions
+
+1. `transfer(to, value)`
+```solidity
+function transfer(address to, uint256 value) public virtual returns (bool) {
+    address owner = _msgSender();    // (1) Resolve sender context
+    _transfer(owner, to, value);     // (2) Delegate to internal logic
+    return true;                     // (3) Confirm success
+}
+```
+
+> `_transfer(from, to, value)`
+```solidity
+if (from == address(0)) revert ERC20InvalidSender(...);      // (4) Prevent invalid sender
+if (to == address(0)) revert ERC20InvalidReceiver(...);    // (5) Prevent invalid recipient
+_update(from, to, value);     // (6) Core transfer logic
+```
+
+> `_update(from, to, value)`
+```solidity
+// MINT: from == address(0) -> skipped
+
+uint256 fromBalance = _balances[from];   // (7) Fetch balance
+if (fromBalance < value) revert ERC20InsufficientBalance(...);           // (8) Revert if not enough
+unchecked { _balances[from] = fromBalance - value; }        // (9) Deduct safely
+
+// BURN: to == address(0) -> skipped
+
+unchecked { _balances[to] += value; } // (10) Add to recipient
+emit Transfer(from, to, value);  // (11) Log event
+```
+
+2. `approve(spender, value)`
+```solidity
+function approve(address spender, uint256 value) public virtual returns (bool) {
+    address owner = _msgSender();  // (1) Resolve sender
+    _approve(owner, spender, value); // (2) Set allowance
+    return true; // (3) Confirm success
+}
+```
+
+> `_approve(owner, spender, value)`
+```solidity
+_approve(owner, spender, value, true);  // (4) Call with event enabled
+```
+
+> `_approve(owner, spender, value, emitEvent)`
+```solidity
+if (owner == address(0)) revert ERC20InvalidApprover(...); // (5) Guard
+if (spender == address(0)) revert ERC20InvalidSpender(...);  // (6) Guard
+
+_allowances[owner][spender] = value;  // (7) Set new allowance
+
+if (emitEvent) emit Approval(owner, spender, value);  // (8) Emit if needed
+```
+
+3. `transferFrom(from, to, value)`
+```solidity 
+function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+    address spender = _msgSender(); // (1) Resolve caller
+    _spendAllowance(from, spender, value); // (2) Deduct from allowance
+    _transfer(from, to, value);  // (3) Perform transfer
+    return true;  // (4) Confirm success
+}
+```
+
+> `_spendAllowance(owner, spender, value)`
+```solidity
+uint256 currentAllowance = allowance(owner, spender);  // (5) Read existing
+if (currentAllowance < type(uint256).max) { // (6) Infinite approval bypass
+    if (currentAllowance < value) {
+        revert ERC20InsufficientAllowance(...); // (7) Revert if too low
+    }
+    unchecked {
+        _approve(owner, spender, currentAllowance - value, false); // (8) Update silently
+    }
+}
+```
+
+> Then flows into: `_transfer -> _update` (same as in `transfer()`)
