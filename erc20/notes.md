@@ -285,3 +285,264 @@ Security
 - Defaults to 0 if never approved
 - Infinite approval (type(uint256).max) optimization handled in _spendAllowance
 
+## Write Functions
+1. `transfer(address to, uint256 value)`
+```solidity
+function transfer(address to, uint256 value) public virtual returns (bool) {
+    address owner = _msgSender();
+    _transfer(owner, to, value);
+    return true;
+}
+```
+
+Purpose:
+Allows `msg.sender` to send tokens from their own balance to another address.
+
+Key Mechanics:
+- Reads sender address via `_msgSender()` (for meta-transaction compatibility)
+- Delegates core transfer logic to `_transfer(owner, to, value)`
+- Returns `true` for success — as per convention
+
+Security:
+- Reverts if:
+> `to` is the zero address
+> `value > balance of msg.sender`
+- Emits a `Transfer` event (from `_transfer`)
+
+Design Notes:
+- Function is `virtual` to allow override (e.g., fee-on-transfer tokens)
+- Uses `_transfer()` → `_update()` for modularity and internal reuse
+
+2. `approve(address spender, uint256 value)`
+```solidity
+function approve(address spender, uint256 value) public virtual returns (bool) {
+    address owner = _msgSender();
+    _approve(owner, spender, value);
+    return true;
+}
+```
+
+Purpose:
+Sets the allowance that `spender` is allowed to withdraw from `msg.sender`.
+
+Key Mechanics:
+- Calls `_approve(msg.sender, spender, value)`
+- Fully overwrites previous approval
+- Returns `true` on success
+
+
+Security Considerations:
+- Approval race condition: Spender may front-run and use old allowance before new one is set
+> Fix: Use `increaseAllowance()`/`DecreaseAllowance()`
+- Reverts if:
+> `spender` is the zero address
+
+3. `transferFrom(address from, address to, uint258 value)`
+
+```solidity
+function transferFrom(address from, address to, uint256 value) public virtual returns (bool) {
+    address spender = _msgSender();
+    _spendAllowance(from, spender, value);
+    _transfer(from, to, value);
+    return true;
+}
+```
+
+Purpose:
+Allows a `spender` (approved address) to transfer tokens from a third party (`from`) to another address (`to`).
+Used by:
+- DeFi protocols (e.g. Uniswap, Compound)
+- Vaults, staking contracts, etc
+
+Key Mechanics:
+- `_spendAllowance()` handles allowance reduction (unless infinite approval)
+- `_transfer()` performs the balance updates
+
+Security: 
+- Reverts if:
+> `from` or `to` is zero address
+> `spender` has insufficient balance
+> `from` has insufficient balance
+- Emits:
+> `Transfer` event (in `_transfer`)
+> (Optionally skips `Approval` for gas savings)
+
+Optimizations:
+`type(uint256).max` check allows for infinite approvals:
+```solidity
+if (allowance == type(uint256).max) {
+    // do not reduce allowance
+}
+```
+
+## Internal Core Logic
+
+1. `_transfer(from, to, value)`
+```solidity
+function _transfer(address from, address to, uint256 value) internal {
+    if (from == address(0)) revert ERC20InvalidSender(address(0));
+    if (to == address(0)) revert ERC20InvalidReceiver(address(0));
+    _update(from, to, value);
+}
+```
+
+Purpose: 
+An internal version of transfer, used by:
+- transfer
+- transferFrom
+
+Security
+Reverts on zero addresses - protects against token loss or mint/burn misuse
+
+Design Notes:
+- Doesn’t emit `Transfer` itself → defers to `_update`
+- Keeps concerns separated: this handles validation, `_update` handles mutation
+
+2. `update(from, to, value)`
+```solidity
+function _update(address from, address to, uint256 value) internal virtual {}
+```
+
+Purpose:
+Handles:
+- Transfers (from -> 0)
+- Mints (`from == address(0)`)
+- Burns (`to == address(0)`)
+
+Key Logic:
+```solidity
+if (from == address(0)) {
+    _totalSupply += value; // Mint
+} else {
+    require(_balances[from] >= value);
+    _balances[from] -= value;
+}
+
+if (to == address(0)) {
+    _totalSupply -= value; // burn
+} else {
+    _balances[to] += value;
+}
+
+emit Transfer(from, to, value);
+```
+
+What makes this powerful
+- One unified code path for mint, transfer, burn
+- Used internally by: 
+> `_transfer`
+> `_mint`
+> `_burn`
+
+Gas Optimization:
+- Uses `unchecked` arithmetic after bounds check
+- Minimizes duplication (no multiple emit statements)
+
+Security:
+- Reverts on underflow
+- Prevents supply over/underflow
+- Emits Transfer event on all changes
+
+3. `_approve(owner, spender, value, emitEvent)`
+```solidity
+function _approve(address owner, address spender, uint256 value, bool emitEvent) internal virtual {}
+```
+
+Purpose:
+- Sets the `allowance` value and optionally emits the `Approval` event.
+
+Used by:
+- `approve()` -> sets with event
+- `transferFrom()` -> sets with `emitEvent = false` if allowance is reduced
+
+Security:
+- Reverts if `owner` or `spender` is the zero address
+- Only sets - does not subtract or increment
+
+Design Choice:
+- Splitting emit behavior saves gas in `transferFrom()`
+- Clearn separation between setting and notifying
+
+4. `_approve(owner, spender, value)`
+```solidity
+function _approve(address owner, address spender, uint256 value) internal {
+    _approve(owner, spender, value, true);
+}
+```
+
+Purpose:
+- Simplifies common case: set and emit event
+
+Just a wrapper:
+- Used by `approve()` and possibly others
+
+5. `_spendAllowance(owner, spender, value)`
+```solidity
+function _spendAllowance(address owner, address spender, uint256 value) internal virtual {}
+```
+
+Purpose:
+Reduces allowance during `transferFrom`
+
+Logic:
+- If allowance is `type(uint256).max` -> skip deduction (infinite approval)
+- Else:
+> Ensure `value <= currentAllowance`
+> Set new allowance to `currentAllowance - value` (via `approve(..., false)`)
+
+Security:
+- Prevents overspending
+- Skips unnecessary storage writes if infinite
+- Doesn’t emit Approval → saves gas intentionally
+
+## Minting & Burning
+1. `_mint(address account, uint256 value)`
+
+Purpose:
+Creates `value` amount of tokens and assigns them to `account`.
+
+How it works:
+```solidity
+if (account == address(0)) revert ERC20InvalidReceiver(address(0));
+_update(address(0), account, value);
+```
+
+- Calls `_update(0x0, account, value)`
+- This triggers the "minting" logic in `_update`:
+
+```solidity
+if (from == address(0)) {
+    _totalSupply += value;
+}
+
+...
+
+_balances[to] += value;
+emit Transfer(address(0), to, value);
+```
+
+Design Benefits:
+- Uses internal `_update()` for consistency and DRYness
+- Keeps mint/burn logic centralized
+
+2. `_burn(address account, uint256 value)`
+
+Purpose:
+Destroys `value` amount of tokens from `account`, reducing total supply.
+
+How it works:
+```solidity
+if (account == address(0)) revert ERC20InvalidSender(address(0));
+_update(account, address(0), value);
+```
+
+- This triggers burn logic in `_update`:
+```solidity
+if (to == address(0)) {
+    _totalSupply -= value;
+}
+...
+_balances[from] -= value;
+emit Transfer(from, address(0), value);
+```
+
