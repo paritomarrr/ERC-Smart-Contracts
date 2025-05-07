@@ -18,7 +18,7 @@ import {IERC20Errors} from "../../interfaces/IERC20Errors.sol";
  * functions revert instead returning `false` on failure. 
  * This behavior is nonetheless conventional and does not conflict with the expectations of ERC20 applications. 
  */
-abstract contract ERC20 is IERC20, IERC20Metadata, Context, IERC20Errors {
+contract ERC20 is IERC20, IERC20Metadata, Context, IERC20Errors {
 
     string private _name;
     string private _symbol;
