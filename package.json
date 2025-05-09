@@ -1,10 +1,16 @@
 {
-  "name": "new",
+  "name": "erc-smart-contracts",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "test:foundry": "forge test -vv --root erc20/test-foundry",
+  "test:foundry:unit": "forge test --match-path test/ERC20.t.sol -vv --root erc20/test-foundry",
+  "test:foundry:invariant": "forge test --match-path test/invariants/InvariantERC20.t.sol -vv --root erc20/test-foundry",
+
+  "test:hardhat": "cd erc20/test-hardhat && npx hardhat test ./ERC20.test.js",
+  "build:hardhat": "cd erc20/test-hardhat && npx hardhat compile",
+  "clean:hardhat": "cd erc20/test-hardhat && npx hardhat clean"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
