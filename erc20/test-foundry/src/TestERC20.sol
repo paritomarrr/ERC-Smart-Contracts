@@ -2,10 +2,11 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import {ERC20} from "erc20/contracts/ERC20.sol";
+import {ERC20} from "contracts/ERC20.sol";
 
-contract TestER20 is ERC20 {
-    constructor(
+contract TestERC20 is ERC20 {
+    
+        constructor(
         string memory name,
         string memory symbol,
         uint256 initialSupply
