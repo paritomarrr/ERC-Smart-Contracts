@@ -413,3 +413,308 @@ signature = (r, s)
 
 This is what's sent alongside the message (and public key) to any verifier — either a smart contract (like ERC-2612’s `permit()`), an RPC API, or another off-chain validator.
 
+## 6. Verifying a Signature in ECDSA
+
+### Inputs Required for Verification
+To verify a signature, the verifier needs:
+
+- `msgHash` → the hash of the original message (usually Keccak-256 in Ethereum)
+- `r, s` → the two components of the ECDSA signature
+- `Q` → the public key of the signer
+
+> This is why in Ethereum we can recover the address from a signature:
+We know the r, s and msgHash, and we recover Q.
+
+### The Verification Equation
+ECDSA signature verification relies on the following core equation:
+
+```
+P = (z / s) * G + (r / s) * Q
+```
+
+Where:
+- `z` is the message hash
+- `G` is the generator point
+- `Q` is the public key (i.e. Q = d * G)
+- `r` and `s` come from the signature
+
+If `x(P) ≡ r mod n`, then the signature is valid.
+
+Let’s break that down.
+
+Step-by-Step Verification
+
+1. Check that `r` and `s` are in range
+```
+1 <= r < n, 1 <= s < n
+```
+If not, the signature is invalid.
+
+2. Calculate `s⁻¹ mod n` (modular inverse of `s`)
+
+3. Compute Scalars u₁ and u₂
+
+4. Calculate Point P
+
+5. Check x(P) ≡ r mod n
+
+The x-coordinate of point `P` must match `r` (modulo the curve order). If it does, the signature is valid.
+
+### Why  Does this Work?
+```
+# -----------------------------------------------
+# Why Does ECDSA Signature Verification Work?
+# -----------------------------------------------
+
+# Recall the signer calculates:
+#     s = k⁻¹ * (z + r * d) mod n
+#
+# Where:
+# - k is a random ephemeral secret
+# - z is the message hash
+# - r is x(k * G)
+# - d is the private key
+# - s is part of the signature
+
+# Rearranging to isolate k:
+#     k = (z + r * d) * s⁻¹ mod n
+
+# Multiply both sides by G (generator point on the curve):
+#     k * G = (z * s⁻¹) * G + (r * s⁻¹) * d * G
+
+# Note:
+#     d * G = Q  →  public key
+
+# So:
+#     k * G = u1 * G + u2 * Q
+#     where:
+#         u1 = z * s⁻¹ mod n
+#         u2 = r * s⁻¹ mod n
+
+# Therefore:
+#     P = u1 * G + u2 * Q = k * G
+
+# Remember:
+#     r = x(k * G)
+# So:
+#     r == x(P)
+
+# Conclusion:
+# If the reconstructed point P = u1 * G + u2 * Q has x-coordinate equal to r,
+# then the signature is valid. Otherwise, it is invalid.
+
+
+```
+
+## 7. ECDSA in Ethereum
+
+### Where ECDSA Is Used
+ECDSA is foundational to Ethereum’s security model and is used in multiple critical places:
+
+- Transactions: Every Ethereum transaction is signed with ECDSA to prove the sender's authenticity.
+- Signed messages: Off-chain messages (like `personal_sign`) use ECDSA signatures to verify intent.
+- EIP-712: Typed structured data signing, widely used for improving UX/security in DeFi & DAOs.
+- ERC-2612: Enables gasless approvals for ERC-20 tokens by signing `permit(...)` messages off-chain.
+
+Ethereum Signature Format: `{r, s, v}`
+Ethereum uses a 65-byte signature composed of:
+
+- `r`: 32-byte x-coordinate of the ephemeral point `R = k * G`
+
+- `s`: 32-byte scalar derived from the signing equation
+
+- `v`: 1-byte recovery identifier that helps reconstruct the public key (27 or 28, sometimes 0/1 internally)
+
+```
+Signature = { r: bytes32, s: bytes32, v: uint8 }
+Total size = 65 bytes
+```
+
+Public Key Recovery: `ecrecover`
+In Ethereum, rather than sending the full public key, signatures include `{r, s, v}`, and the recipient recovers the public key from the signature using the `ecrecover` precompile at address `0x01`.
+
+
+```
+address recovered = ecrecover(messageHash, v, r, s);
+```
+
+This allows anyone to verify that the signer (owner of private key) matches an Ethereum address — without the sender having to send their full public key.
+
+Chain ID and `v` Role: EIP-155
+To prevent cross-chain replay attacks, Ethereum introduced EIP-155, which modifies the `v` value to encode the chain ID.
+
+Instead of being just 27 or 28, `v` becomes:
+
+```
+v = chain_id * 2 + 35 or 36
+```
+
+- Helps distinguish the intended chain of the transaction
+
+- Ensures the signature is invalid on other EVM-compatible chains
+
+This is why v can often look like 137, 138 (for chainId 51), etc.
+
+## 8. Signature Encoding in ECDSA
+
+### `r`, `s`, and `v` Components
+ECDSA signatures consist of three main values:
+
+- `r` — the x-coordinate of the ephemeral point `R = k * G`
+- `s` — a scalar computed as `s = k⁻¹(z + r * d) mod n`
+- `v` — the recovery identifier (either 27/28 or 0/1), indicating which of two possible public keys is valid
+
+### Ethereum's Concatenated Signature Format (65 Bytes)
+Ethereum uses a flat binary format for signatures:
+
+```
+Signature = r (32 bytes) || s (32 bytes) || v (1 byte)
+           = total 65 bytes
+```
+
+This format is optimized for gas and simplicity.
+
+Example (Hex representation):
+
+```
+r: 0x1c4f...29d3 (32 bytes)
+s: 0x7aab...f01b (32 bytes)
+v: 0x1b        (1 byte = 27)
+```
+
+Combined into a single 65-byte signature string.
+
+### DER Encoding vs Ethereum Format
+DER (Distinguished Encoding Rules) is a common ASN.1 format used in TLS, OpenSSL, and traditional cryptography libraries.
+
+A DER-encoded ECDSA signature looks like:
+```
+0x30 + length +
+   0x02 + len(r) + r_bytes +
+   0x02 + len(s) + s_bytes
+```
+
+- Variable length
+- Includes metadata like tags and lengths
+- Commonly used in Web2 systems and Bitcoin
+
+Ethereum avoids DER for:
+
+- Simplicity
+- Fixed-length structure (always 65 bytes)
+- Compatibility with ecrecover and EVM precompiles
+
+## 9. EIP-712 & Typed Data Signing
+
+### The Problem: Replay Attacks with Off-Chain Signatures
+Traditional signatures using `personal_sign` or `eth_sign` just hash a raw string:
+
+```solidity
+hash = keccak256("\x19Ethereum Signed Message:\n" + len(msg) + msg)
+```
+
+Problem:
+- Same signature could be reused across different contracts or chains.
+
+- Anyone could copy a signed message and reuse it somewhere else (replay attack).
+
+- The original signer might not have intended to approve the second action.
+
+The EIP-712 Solution: Typed, Structured Data
+
+EIP-712 improves message signing by:
+- Introducing structured data
+- Separating the data into domain, type hash, and message body
+- Making signatures human-readable and context-specific
+
+No more raw strings. Everything is structured like a typed object in JSON.
+
+### The Domain Separator
+The domain separator anchors the signature to:
+
+- A specific contract
+- A specific chain
+- A specific dApp context
+
+```solidity
+DOMAIN_SEPARATOR = keccak256(
+  abi.encode(
+    keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+    keccak256(bytes(name)),
+    keccak256(bytes(version)),
+    chainId,
+    address(this)
+  )
+);
+```
+
+This ensures the signature cannot be used in other contracts or chains.
+
+### How the Hashing Works
+EIP-712 uses this formula for the full message hash:
+
+```solidity
+hashToSign = keccak256(
+  abi.encodePacked(
+    "\x19\x01",
+    DOMAIN_SEPARATOR,
+    keccak256(
+      abi.encode(
+        TYPEHASH,  // a keccak hash of the struct definition
+        ...        // values of the struct
+      )
+    )
+  )
+);
+```
+
+This `hashToSign` is passed to `ecdsa.recover()` for signature verification.
+
+## 10. ECDSA vs EdDSA
+
+### What is EdDSA?
+EdDSA stands for Edwards-curve Digital Signature Algorithm.
+
+It’s a newer digital signature scheme based on elliptic curve cryptography, just like ECDSA — but with several cryptographic and implementation improvements.
+
+The most popular instantiation is:
+- Ed25519 (based on the twisted Edwards curve Curve25519)
+- Used in protocols like: Signal, Tor, Solana, Starknet (EdDSA on Stark Curve), etc.
+
+### Key Differences:
+| Feature             | **ECDSA**                            | **EdDSA (Ed25519)**                     |
+| ------------------- | ------------------------------------ | --------------------------------------- |
+| Curve               | secp256k1                            | Edwards curve: ed25519 (or stark curve) |
+| Determinism         | Non-deterministic (needs random `k`) | Deterministic (uses RFC 8032)           |
+| Security Risk       | If `k` reused → private key leak     | Immune to `k` reuse errors              |
+| Signature Size      | 65 bytes (r, s, v)                   | 64 bytes                                |
+| Speed (Sign/Verify) | Slower                               | Faster                                  |
+| Implementation      | Complex & fragile                    | Simple, constant-time, safer            |
+| Library Support     | Widely supported                     | Modern but increasingly popular         |
+| Ethereum Usage      | Standard everywhere (ECDSA only)     | Not native yet (Starknet supports)      |
+
+
+### Why EdDSA is Considered Safer & More Modern
+1. Deterministic signatures:
+- ECDSA’s reliance on random k per message can lead to catastrophic failures (e.g., Sony PlayStation, Blockchain.info bugs).
+- EdDSA eliminates that class of bugs with deterministic k derived from the message + private key.
+
+2. Constant-Time Implementation:
+
+- Designed for side-channel resistance and simplicity.
+- ECDSA requires extra care to avoid leaking timing information.
+
+3. Simplified Design:
+
+- EdDSA has fewer edge cases and better composability.
+
+### Ongoing Transition in the Blockchain Space
+While Ethereum still relies on ECDSA due to legacy and EVM compatibility, newer systems and L2s are actively exploring or adopting EdDSA:
+
+| Ecosystem      | Algorithm                        |
+| -------------- | -------------------------------- |
+| **Ethereum**   | ECDSA (secp256k1)                |
+| **Starknet**   | EdDSA on Stark Curve             |
+| **Solana**     | Ed25519                          |
+| **ZK Systems** | EdDSA preferred (SNARK-friendly) |
+| **Polkadot**   | sr25519 (Schnorr + EdDSA hybrid) |
