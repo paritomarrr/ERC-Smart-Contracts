@@ -301,17 +301,33 @@ library ECDSA {
     }
 
     /**
-     * @dev Optionally reverts with the corresponding custom error according to the `error` argument provided.
+     * @notice Internal helper to handle signature recovery errors.
+     *
+     * @dev This function takes an enum `RecoverError` and an optional extra argument `errorArg`
+     *      and either does nothing (if no error), or reverts with a descriptive custom Solidity error.
+     *
+     *      It's used by `recover()` to translate `tryRecover()` failures into clean, typed reverts.
+     *
+     * @param error The type of signature error that occurred (e.g., invalid length, malleable `s` value, etc.).
+     * @param errorArg Additional context for the error (e.g., signature length or the invalid `s` value).
      */
     function _throwError(RecoverError error, bytes32 errorArg) private pure {
+        // If there's no error, do nothing and return normally
         if (error == RecoverError.NoError) {
-            return; // no error: do nothing
-        } else if (error == RecoverError.InvalidSignature) {
-            revert ECDSAInvalidSignature();
-        } else if (error == RecoverError.InvalidSignatureLength) {
+            return;
+        }
+        // If the signature failed to recover a valid signer address (generic failure)
+        else if (error == RecoverError.InvalidSignature) {
+            revert ECDSAInvalidSignature(); // Revert with custom error for invalid signature
+        }
+        // If the signature length is incorrect (not 65 bytes)
+        else if (error == RecoverError.InvalidSignatureLength) {
+            // Cast `errorArg` (which holds the actual length) back to uint for error reporting
             revert ECDSAInvalidSignatureLength(uint256(errorArg));
-        } else if (error == RecoverError.InvalidSignatureS) {
-            revert ECDSAInvalidSignatureS(errorArg);
+        }
+        // If the signature's `s` value is not in the lower half of the curve order (malleable)
+        else if (error == RecoverError.InvalidSignatureS) {
+            revert ECDSAInvalidSignatureS(errorArg); // Provide invalid `s` value for debugging
         }
     }
 }
