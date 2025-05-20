@@ -24,7 +24,7 @@ async function getDomain(contract) {
     salt,
   };
 
-  for (const [i, { name }] of types.EIP712Domain.entries()) {
+  for (const [i, { name }] of types.types.EIP712Domain.entries()) {
     if (!(fields & (1 << i))) {
       delete domain[name];
     }

@@ -1,18 +1,18 @@
 const formatType = (schema) =>
   Object.entries(schema).map(([name, type]) => ({ name, type }));
 
-module.exports = {
+
   // Create a new object by mapping the values through a function, keeping the keys. Second function can be used to pre-filter entries
   // Example: mapValues({a:1,b:2,c:3}, x => x**2) -> {a:1,b:4,c:9}
-  mapValues: (obj, fn, fn2 = () => true) =>
+ const  mapValues = (obj, fn, fn2 = () => true) =>
     Object.fromEntries(
       Object.entries(obj)
         .filter(fn2)
         .map(([k, v]) => [k, fn(v)])
-    ),
-};
+    );
 
-module.exports = mapValues(
+
+const types = mapValues(
   {
     EIP712Domain: {
       name: "string",
@@ -67,4 +67,8 @@ module.exports = mapValues(
   formatType
 );
 
-module.exports.formatType = formatType;
+module.exports = {
+    mapValues,
+    formatType,
+    types,
+};
